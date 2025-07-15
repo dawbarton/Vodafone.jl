@@ -1,9 +1,25 @@
-name = "vodafone"
+name = "Vodafone"
 uuid = "adf26b82-d162-4576-a0f4-332f7fb8d8f0"
 authors = ["David A W Barton"]
 version = "1.0.0-DEV"
 
+[deps]
+Arrow = "69666777-d1a9-59fb-9406-91d4454c9d45"
+CSV = "336ed68f-0bac-5ca0-87d4-7b16caf5d00b"
+CoordRefSystems = "b46f11dc-f210-4604-bfba-323c1ec968cb"
+DataFrames = "a93c6f00-e57d-5684-b7b6-d8193f3e46c0"
+GADM = "a8dd9ffe-31dc-4cf5-a379-ea69100a8233"
+GLMakie = "e9467ef8-e4e7-5192-8a1a-b1aee30e663a"
+GeoInterface = "cf35fbd7-0cd7-5166-be24-54bfbe79505f"
+
 [compat]
+Arrow = "2.8.0"
+CSV = "0.10.15"
+CoordRefSystems = "0.18.7"
+DataFrames = "1.7.0"
+GADM = "1.2.0"
+GLMakie = "0.13.3"
+GeoInterface = "1.5.0"
 julia = "1.11"
 
 [extras]
