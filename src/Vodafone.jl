@@ -43,7 +43,7 @@ function read_ofcom_2024_raw()
 end
 
 function read_ofcom_2024_arrow()
-    return Arrow.Table(joinpath(DATA_PATH, "4g-lte-2024-mobile-signal-measurement-data.arrow"))
+    return DataFrame(Arrow.Table(joinpath(DATA_PATH, "4g-lte-2024-mobile-signal-measurement-data.arrow")); copycols=false)
 end
 
 # Plotting
@@ -88,6 +88,7 @@ function get_heatmap(data; bin_length=25)
     return (x, y, rsrp)
 end
 
+# Note: can use `construct_plot(read_ofcom_2024_raw(), GADM.get("GBR"))` to avoid having to create the Arrow file.
 function construct_plot(data = read_ofcom_2024_arrow(), gbr = GADM.get("GBR"))
     coords = get_outline(gbr)
     (x, y, rsrp) = get_heatmap(data; bin_length=1000)
