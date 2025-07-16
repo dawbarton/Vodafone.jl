@@ -1,5 +1,6 @@
 module Vodafone
 
+using Statistics
 using GLMakie
 
 const DATA_PATH = joinpath(@__DIR__, "..", "data")
@@ -225,34 +226,138 @@ function combine_data_2024()
             hour_ref = row.hour_ref
             voda_pci = pred_pci[i_y, i_x] !== missing ? pred_pci[i_y, i_x] : ""
             voda_rsrp = pred_rsrp[i_y, i_x] !== missing ? pred_rsrp[i_y, i_x] : ""
-            ofcom_pci_top1 = (row.earfcn_top1_vf !== missing) &&
-                             (row.earfcn_top1_vf == 6300) ?
-                             row.pci_top1_vf : ""
-            ofcom_pci_top2 = (row.earfcn_top2_vf !== missing) &&
-                             (row.earfcn_top2_vf == 6300) ?
-                             row.pci_top2_vf : ""
-            ofcom_pci_top3 = (row.earfcn_top3_vf !== missing) &&
-                             (row.earfcn_top3_vf == 6300) ?
-                             row.pci_top3_vf : ""
-            ofcom_pci_top4 = (row.earfcn_top4_vf !== missing) &&
-                             (row.earfcn_top4_vf == 6300) ?
-                             row.pci_top4_vf : ""
-            ofcom_rsrp_top1 = (row.earfcn_top1_vf !== missing) &&
-                              (row.earfcn_top1_vf == 6300) ?
-                              row.rsrp_top1_vf : ""
-            ofcom_rsrp_top2 = (row.earfcn_top2_vf !== missing) &&
-                              (row.earfcn_top2_vf == 6300) ?
-                              row.rsrp_top2_vf : ""
-            ofcom_rsrp_top3 = (row.earfcn_top3_vf !== missing) &&
-                              (row.earfcn_top3_vf == 6300) ?
-                              row.rsrp_top3_vf : ""
-            ofcom_rsrp_top4 = (row.earfcn_top4_vf !== missing) &&
-                              (row.earfcn_top4_vf == 6300) ?
-                              row.rsrp_top4_vf : ""
+            # OFCOM data
+            top1 = (row.earfcn_top1_vf !== missing) &&
+                   (row.earfcn_top1_vf == 6300) && (row.pci_top1_vf !== missing) &&
+                   (row.rsrp_top1_vf !== missing)
+            top2 = (row.earfcn_top2_vf !== missing) &&
+                   (row.earfcn_top2_vf == 6300) && (row.pci_top2_vf !== missing) &&
+                   (row.rsrp_top2_vf !== missing)
+            top3 = (row.earfcn_top3_vf !== missing) &&
+                   (row.earfcn_top3_vf == 6300) && (row.pci_top3_vf !== missing) &&
+                   (row.rsrp_top3_vf !== missing)
+            top4 = (row.earfcn_top4_vf !== missing) &&
+                   (row.earfcn_top4_vf == 6300) && (row.pci_top4_vf !== missing) &&
+                   (row.rsrp_top4_vf !== missing)
+            if !top1 && !top2 && !top3 && !top4
+                continue
+            end
+            ofcom_pci_top1 = top1 ? row.pci_top1_vf : ""
+            ofcom_pci_top2 = top2 ? row.pci_top2_vf : ""
+            ofcom_pci_top3 = top3 ? row.pci_top3_vf : ""
+            ofcom_pci_top4 = top4 ? row.pci_top4_vf : ""
+            ofcom_rsrp_top1 = top1 ? row.rsrp_top1_vf : ""
+            ofcom_rsrp_top2 = top2 ? row.rsrp_top2_vf : ""
+            ofcom_rsrp_top3 = top3 ? row.rsrp_top3_vf : ""
+            ofcom_rsrp_top4 = top4 ? row.rsrp_top4_vf : ""
             println(f,
                 "$x,$y,$month_year,$hour_ref,$voda_pci,$voda_rsrp,$ofcom_pci_top1,$ofcom_rsrp_top1,$ofcom_pci_top2,$ofcom_rsrp_top2,$ofcom_pci_top3,$ofcom_rsrp_top3,$ofcom_pci_top4,$ofcom_rsrp_top4")
         end
     end
 end
 
+# Dict(["x"=>Int,"y"=>Int,"month_year"=>String,"hour_ref"=>String,"voda_pci"=>Union{Int,Missing},"voda_rsrp"=>Union{Float64,Missing},"ofcom_pci_top1"=>Union{Int,Missing},"ofcom_rsrp_top1"=>Union{Float64,Missing},"ofcom_pci_top2"=>Union{Int,Missing},"ofcom_rsrp_top2"=>Union{Float64,Missing},"ofcom_pci_top3"=>Union{Int,Missing},"ofcom_rsrp_top3"=>Union{Float64,Missing},"ofcom_pci_top4"=>Union{Int,Missing},"ofcom_rsrp_top4"=>Union{Float64,Missing}"])
+
+function summarise_data_2024(data)
+    AllData = @NamedTuple{voda_pci::Int, voda_rsrp::Float64,
+        ofcom_pci::Vector{Int}, ofcom_rsrp::Vector{Float64}}
+    alldata = Dict{Int, AllData}()
+    for row in eachrow(data)
+        tb = (row.x - row.x % 100) * 1_000_000 + (row.y - row.y % 100)
+        if !haskey(alldata, tb)
+            alldata[tb] = AllData((row.voda_pci, row.voda_rsrp, Int[], Float64[]))
+        end
+        if row.ofcom_pci_top1 !== missing
+            push!(alldata[tb].ofcom_pci, row.ofcom_pci_top1)
+            push!(alldata[tb].ofcom_rsrp, row.ofcom_rsrp_top1)
+        end
+        if row.ofcom_pci_top2 !== missing
+            push!(alldata[tb].ofcom_pci, row.ofcom_pci_top2)
+            push!(alldata[tb].ofcom_rsrp, row.ofcom_rsrp_top2)
+        end
+        if row.ofcom_pci_top3 !== missing
+            push!(alldata[tb].ofcom_pci, row.ofcom_pci_top3)
+            push!(alldata[tb].ofcom_rsrp, row.ofcom_rsrp_top3)
+        end
+        if row.ofcom_pci_top4 !== missing
+            push!(alldata[tb].ofcom_pci, row.ofcom_pci_top4)
+            push!(alldata[tb].ofcom_rsrp, row.ofcom_rsrp_top4)
+        end
+    end
+    Summary = @NamedTuple{tb::Int, voda_pci::Int, voda_rsrp::Float64,
+        ofcom_pci_mode::Int, ofcom_pci_mode_count::Int,
+        ofcom_rsrp_match_mean::Union{Float64, Missing}, ofcom_rsrp_match_median::Union{
+            Float64, Missing},
+        ofcom_rsrp_match_min::Union{Float64, Missing}, ofcom_rsrp_match_max::Union{
+            Float64, Missing},
+        ofcom_match_count::Int,
+        ofcom_rsrp_all_mean::Float64, ofcom_rsrp_all_median::Float64,
+        ofcom_rsrp_all_min::Float64, ofcom_rsrp_all_max::Float64,
+        ofcom_all_count::Int}
+    summary = Vector{Summary}()
+    for (tb, sum) in alldata
+        if isempty(sum.ofcom_pci)
+            continue
+        end
+        voda_pci = sum.voda_pci
+
+        ofcom_pci = unique(sum.ofcom_pci)
+        ofcom_pci_count = zeros(Int, length(ofcom_pci))
+        for (i, pci) in enumerate(ofcom_pci)
+            ofcom_pci_count[i] = count(sum.ofcom_pci .== pci)
+        end
+        argmax_pci = argmax(ofcom_pci_count)
+        ofcom_pci_mode = ofcom_pci[argmax_pci]
+        ofcom_pci_mode_count = ofcom_pci_count[argmax_pci]
+
+        match = sum.ofcom_pci .== voda_pci
+        ofcom_rsrp_match = sum.ofcom_rsrp[match]
+        ofcom_rsrp_all = sum.ofcom_rsrp
+
+        ofcom_rsrp_match_mean = isempty(ofcom_rsrp_match) ? missing : mean(ofcom_rsrp_match)
+        ofcom_rsrp_match_median = isempty(ofcom_rsrp_match) ? missing :
+                                  median(ofcom_rsrp_match)
+        ofcom_rsrp_match_min = isempty(ofcom_rsrp_match) ? missing :
+                               minimum(ofcom_rsrp_match)
+        ofcom_rsrp_match_max = isempty(ofcom_rsrp_match) ? missing :
+                               maximum(ofcom_rsrp_match)
+        ofcom_match_count = count(match)
+
+        ofcom_rsrp_all_mean = mean(ofcom_rsrp_all)
+        ofcom_rsrp_all_median = median(ofcom_rsrp_all)
+        ofcom_rsrp_all_min = minimum(ofcom_rsrp_all)
+        ofcom_rsrp_all_max = maximum(ofcom_rsrp_all)
+        ofcom_all_count = length(ofcom_rsrp_all)
+
+        if ofcom_match_count == ofcom_pci_mode_count
+            ofcom_pci_mode = voda_pci  # If the match count is the same as the mode count, it's just a question of sorting so use the voda_pci
+        end
+
+        push!(summary,
+            Summary((tb, voda_pci, sum.voda_rsrp,
+                ofcom_pci_mode, ofcom_pci_mode_count,
+                ofcom_rsrp_match_mean, ofcom_rsrp_match_median,
+                ofcom_rsrp_match_min, ofcom_rsrp_match_max, ofcom_match_count,
+                ofcom_rsrp_all_mean, ofcom_rsrp_all_median,
+                ofcom_rsrp_all_min, ofcom_rsrp_all_max, ofcom_all_count)))
+    end
+    return summary
+end
+
 end # module Vodafone
+
+# tb: terrain bin (xy)
+# voda_pci: Vodafone predicted PCI
+# voda_rsrp: Vodafone predicted RSRP
+# ofcom_pci_mode: Ofcom most common PCI
+# ofcom_pci_mode_count: Number of times the Ofcom most common PCI appears
+# ofcom_rsrp_match_mean: Mean RSRP for Ofcom measurements matching the Vodafone PCI
+# ofcom_rsrp_match_median: Median RSRP for Ofcom measurements matching the Vodafone PCI
+# ofcom_rsrp_match_min: Minimum RSRP for Ofcom measurements matching the Vodafone PCI
+# ofcom_rsrp_match_max: Maximum RSRP for Ofcom measurements matching the Vodafone PCI
+# ofcom_match_count: Number of Ofcom measurements matching the Vodafone PCI
+# ofcom_rsrp_all_mean: Mean RSRP for all Ofcom measurements
+# ofcom_rsrp_all_median: Median RSRP for all Ofcom measurements
+# ofcom_rsrp_all_min: Minimum RSRP for all Ofcom measurements
+# ofcom_rsrp_all_max: Maximum RSRP for all Ofcom measurements
+# ofcom_all_count: Number of Ofcom measurements
