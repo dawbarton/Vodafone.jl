@@ -1,26 +1,24 @@
-module Vodafone
+# If this file is run directly, it will create a temporary environment and install the required packages
+using Pkg
+Pkg.activate(; temp = true)
+Pkg.add(["CSV", "DataFrames", "Statistics", "CoordRefSystems"])
 
+# Load packages
+using CSV
+using DataFrames
 using Statistics
-using GLMakie
+using CoordRefSystems
 
 const DATA_PATH = joinpath(@__DIR__, "..", "data")
 export DATA_PATH
 
-# Coordinate transformations
-
-using CoordRefSystems
-using GeoInterface
-using GADM
-
 const BNG = CoordRefSystems.get(EPSG{27700})
 
-function latlon2tb(lat, lon; bin_size = 25)
-    (x, y) = latlon2xy(lat, lon)
-    x = x - (x % bin_size)
-    y = y - (y % bin_size)
-    return "$x$y"
-end
+"""
+    latlon2xy(lat, lon)
 
+Convert latitude and longitude to British National Grid (BNG) coordinates.
+"""
 function latlon2xy(lat, lon)
     p = convert(BNG, LatLon(lat, lon))
     x = floor(Int, p.x.val)
@@ -28,105 +26,34 @@ function latlon2xy(lat, lon)
     return (x, y)
 end
 
-# Data processing
+"""
+    combine_data_2024()
 
-using CSV
-using DataFrames
-using Arrow
+Load the Vodafone predictions and the OFCOM data, combine them, and save the result to a CSV file.
+This function reads the Vodafone predictions for RSRP and PCI, the index to cell mapping,
+and the cell to PCI mapping. It then reads the OFCOM data, combines it with the Vodafone predictions,
+and saves the result to a CSV file.
 
-# Outline of GBR
+RSRP values are filtered to be between -110 and -45 dBm, and only measurements
+with a valid EARFCN of 6300 are considered.
 
-function get_outline(gbr = GADM.get("GBR"))
-    coords = GeoInterface.coordinates(gbr)
-    # Convert coordinates to BNG
-    return [[[[latlon2xy(pt[2], pt[1]) for pt in pts] for pts in ptss] for ptss in ptsss]
-            for ptsss in coords]
-end
+The output CSV file contains the following columns:
 
-function plot_outline!(ax, coords)
-    for coord in coords
-        for pts in coord
-            for pt in pts
-                lines!(ax, [xx[1] for xx in pt], [xx[2] for xx in pt],
-                    color = :red, linewidth = 0.5)
-            end
-        end
-    end
-end
-
-# Plotting OFCOM data from 2024
-
-function read_ofcom_2024_raw()
-    columns = ["latitude", "longitude", "pci_top1_vf", "rsrp_top1_vf", "earfcn_top1_vf",
-        "pci_top2_vf", "rsrp_top2_vf", "earfcn_top2_vf", "pci_top3_vf", "rsrp_top3_vf",
-        "earfcn_top3_vf", "pci_top4_vf", "rsrp_top4_vf", "earfcn_top4_vf"]
-    data = CSV.read(
-        joinpath(DATA_PATH, "Tony_Vernon_2024 Ofcom 4G Measurement Data",
-            "4g-lte-2024-mobile-signal-measurement-data.csv"),
-        DataFrame;
-        select = columns)
-    pts = latlon2xy.(data.latitude, data.longitude)
-    data.x = [x[1] for x in pts]
-    data.y = [x[2] for x in pts]
-    return data
-end
-
-function read_ofcom_2024_arrow()
-    return DataFrame(
-        Arrow.Table(joinpath(
-            DATA_PATH, "4g-lte-2024-mobile-signal-measurement-data.arrow"));
-        copycols = false)
-end
-
-function get_heatmap(data; bin_size = 25)
-    x_range = (minimum(data.x), maximum(data.x))
-    y_range = (minimum(data.y), maximum(data.y))
-    rsrp = Matrix{Union{Float64, Missing}}(
-        missing, ((x_range[2] - x_range[1]) ÷ bin_size + 1),
-        (y_range[2] - y_range[1]) ÷ bin_size + 1)
-    fill!(rsrp, missing)
-    for row in eachrow(data)
-        rsrp_top1_vf = ((row.earfcn_top1_vf !== missing) &&
-                        (row.rsrp_top1_vf !== missing) && (row.earfcn_top1_vf == 6300)) ?
-                       row.rsrp_top1_vf : missing
-        rsrp_top2_vf = ((row.earfcn_top2_vf !== missing) &&
-                        (row.rsrp_top2_vf !== missing) && (row.earfcn_top2_vf == 6300)) ?
-                       row.rsrp_top2_vf : missing
-        rsrp_top3_vf = ((row.earfcn_top3_vf !== missing) &&
-                        (row.rsrp_top3_vf !== missing) && (row.earfcn_top3_vf == 6300)) ?
-                       row.rsrp_top3_vf : missing
-        rsrp_top4_vf = ((row.earfcn_top4_vf !== missing) &&
-                        (row.rsrp_top4_vf !== missing) && (row.earfcn_top4_vf == 6300)) ?
-                       row.rsrp_top4_vf : missing
-        rsrp_all = collect(skipmissing([
-            rsrp_top1_vf, rsrp_top2_vf, rsrp_top3_vf, rsrp_top4_vf]))
-        if isempty(rsrp_all)
-            continue
-        end
-        rsrp_max = maximum(rsrp_all)
-        x_bin = (row.x - x_range[1]) ÷ bin_size + 1
-        y_bin = (row.y - y_range[1]) ÷ bin_size + 1
-        rsrp[x_bin, y_bin] = rsrp_max
-    end
-    x = x_range[1]:bin_size:x_range[2]
-    y = y_range[1]:bin_size:y_range[2]
-    return (x, y, rsrp)
-end
-
-# Note: can use `construct_plot(read_ofcom_2024_raw(), GADM.get("GBR"))` to avoid having to create the Arrow file.
-function construct_plot(data = read_ofcom_2024_arrow(), gbr = GADM.get("GBR"))
-    coords = get_outline(gbr)
-    (x, y, rsrp) = get_heatmap(data; bin_size = 1000)
-    fig = Figure(size = (1200, 800))
-    ax = Axis(fig[1, 1], title = "Vodafone 4G RSRP Heatmap",
-        xlabel = "Easting (m)", ylabel = "Northing (m)", aspect = 1)
-    plot_outline!(ax, coords)
-    heatmap!(ax, x, y, rsrp)
-    return fig
-end
-
-# Extract difference between OFCOM data and Vodafone predictions
-
+- `x`: X coordinate in BNG
+- `y`: Y coordinate in BNG
+- `month_year`: Month and year of the measurement
+- `hour_ref`: Hour reference of the measurement
+- `voda_pci`: Predicted PCI from Vodafone
+- `voda_rsrp`: Predicted RSRP from Vodafone
+- `ofcom_pci_top1`: OFCOM PCI for the top 1 measurement
+- `ofcom_rsrp_top1`: OFCOM RSRP for the top 1 measurement
+- `ofcom_pci_top2`: OFCOM PCI for the top 2 measurement
+- `ofcom_rsrp_top2`: OFCOM RSRP for the top 2 measurement
+- `ofcom_pci_top3`: OFCOM PCI for the top 3 measurement
+- `ofcom_rsrp_top3`: OFCOM RSRP for the top 3 measurement
+- `ofcom_pci_top4`: OFCOM PCI for the top 4 measurement
+- `ofcom_rsrp_top4`: OFCOM RSRP for the top 4 measurement
+"""
 function combine_data_2024()
     local pred_rsrp, pred_pci, x_origin, y_origin, bin_size
     # Load the matrix of Vodafone predictions
@@ -171,6 +98,7 @@ function combine_data_2024()
             end
         end
     end
+    # Load the index to cell mapping and the cell to PCI mapping
     index2cell_data = CSV.read(
         joinpath(DATA_PATH, "Tony_Vernon_2024 LTE MIMO Terminal [No Loss] (DL) 800MHz",
             "LTE  MIMO Terminal [No Loss] (DL) 800MHz.svr.csv"), DataFrame; header = [
@@ -184,13 +112,14 @@ function combine_data_2024()
         DataFrame; select = ["Transmitter", "Physical Cell ID"])
     cell2pci = Dict{String, Int}()
     for row in eachrow(cell2pci_data)
+        # If the Physical Cell ID is missing (Friday problems...), we set it to -1
         if row.var"Physical Cell ID" !== missing
             cell2pci[row.Transmitter] = row.var"Physical Cell ID"
         else
             cell2pci[row.Transmitter] = -1
         end
     end
-    # Convert the predicted PCI values to the correct format
+    # Convert the index values to PCI values
     for i in eachindex(pred_pci)
         if pred_pci[i] !== missing
             pred_pci[i] = cell2pci[index2cell[pred_pci[i]]]
@@ -199,22 +128,27 @@ function combine_data_2024()
     # Flip the matrices to match the expected coordinate system
     pred_rsrp = reverse(pred_rsrp, dims = 1)
     pred_pci = reverse(pred_pci, dims = 1)
-    # Read the OFCOM data and combine it with the predictions
+    # Read the OFCOM data and combine it with the predictions - selecting only the relevant columns
     columns = Dict(["latitude" => Float64, "longitude" => Float64, "pci_top1_vf" => Int,
         "rsrp_top1_vf" => Float64, "earfcn_top1_vf" => Int, "pci_top2_vf" => Int,
         "rsrp_top2_vf" => Float64, "earfcn_top2_vf" => Int, "pci_top3_vf" => Int,
         "rsrp_top3_vf" => Float64, "earfcn_top3_vf" => Int, "pci_top4_vf" => Int,
         "rsrp_top4_vf" => Float64, "earfcn_top4_vf" => Int, "month_year" => String,
         "hour_ref" => String])
+    # Create a data reader that works line by line to avoid loading the entire file into memory
     data = CSV.Rows(
         joinpath(DATA_PATH, "Tony_Vernon_2024 Ofcom 4G Measurement Data",
             "4g-lte-2024-mobile-signal-measurement-data.csv");
         select = collect(keys(columns)),
-        types = columns)
+        types = columns
+    )
+    # Create an output CSV file with the combined data
     open(joinpath(DATA_PATH, "4g-lte-2024-mobile-signal-measurement-data-combined.csv"),
         "w") do f
+        # Write the header
         println(f,
             "x,y,month_year,hour_ref,voda_pci,voda_rsrp,ofcom_pci_top1,ofcom_rsrp_top1,ofcom_pci_top2,ofcom_rsrp_top2,ofcom_pci_top3,ofcom_rsrp_top3,ofcom_pci_top4,ofcom_rsrp_top4")
+        # Process each row of the data
         for row in data
             pt = latlon2xy(row.latitude, row.longitude)
             i_x = round(Int, (pt[1] - x_origin) ÷ bin_size + 1)
@@ -228,23 +162,24 @@ function combine_data_2024()
             hour_ref = row.hour_ref
             voda_pci = pred_pci[i_y, i_x] !== missing ? pred_pci[i_y, i_x] : ""
             voda_rsrp = pred_rsrp[i_y, i_x] !== missing ? pred_rsrp[i_y, i_x] : ""
-            # OFCOM data
+            # OFCOM data - check if the values are valid
             top1 = (row.earfcn_top1_vf !== missing) &&
                    (row.earfcn_top1_vf == 6300) && (row.pci_top1_vf !== missing) &&
                    (row.rsrp_top1_vf !== missing) && (row.rsrp_top1_vf >= -110.0) &&
                    (row.rsrp_top1_vf <= -45.0)
             top2 = (row.earfcn_top2_vf !== missing) &&
                    (row.earfcn_top2_vf == 6300) && (row.pci_top2_vf !== missing) &&
-                   (row.rsrp_top2_vf !== missing) && (row.rsrp_top1_vf >= -110.0) &&
-                   (row.rsrp_top1_vf <= -45.0)
+                   (row.rsrp_top2_vf !== missing) && (row.rsrp_top2_vf >= -110.0) &&
+                   (row.rsrp_top2_vf <= -45.0)
             top3 = (row.earfcn_top3_vf !== missing) &&
                    (row.earfcn_top3_vf == 6300) && (row.pci_top3_vf !== missing) &&
-                   (row.rsrp_top3_vf !== missing) && (row.rsrp_top1_vf >= -110.0) &&
-                   (row.rsrp_top1_vf <= -45.0)
+                   (row.rsrp_top3_vf !== missing) && (row.rsrp_top3_vf >= -110.0) &&
+                   (row.rsrp_top3_vf <= -45.0)
             top4 = (row.earfcn_top4_vf !== missing) &&
                    (row.earfcn_top4_vf == 6300) && (row.pci_top4_vf !== missing) &&
-                   (row.rsrp_top4_vf !== missing) && (row.rsrp_top1_vf >= -110.0) &&
-                   (row.rsrp_top1_vf <= -45.0)
+                   (row.rsrp_top4_vf !== missing) && (row.rsrp_top4_vf >= -110.0) &&
+                   (row.rsrp_top4_vf <= -45.0)
+            # If none of the values are valid, skip the row
             if !top1 && !top2 && !top3 && !top4
                 continue
             end
@@ -256,19 +191,55 @@ function combine_data_2024()
             ofcom_rsrp_top2 = top2 ? row.rsrp_top2_vf : ""
             ofcom_rsrp_top3 = top3 ? row.rsrp_top3_vf : ""
             ofcom_rsrp_top4 = top4 ? row.rsrp_top4_vf : ""
+            # Write the combined data to the CSV file
             println(f,
                 "$x,$y,$month_year,$hour_ref,$voda_pci,$voda_rsrp,$ofcom_pci_top1,$ofcom_rsrp_top1,$ofcom_pci_top2,$ofcom_rsrp_top2,$ofcom_pci_top3,$ofcom_rsrp_top3,$ofcom_pci_top4,$ofcom_rsrp_top4")
         end
     end
 end
 
-# Dict(["x"=>Int,"y"=>Int,"month_year"=>String,"hour_ref"=>String,"voda_pci"=>Union{Int,Missing},"voda_rsrp"=>Union{Float64,Missing},"ofcom_pci_top1"=>Union{Int,Missing},"ofcom_rsrp_top1"=>Union{Float64,Missing},"ofcom_pci_top2"=>Union{Int,Missing},"ofcom_rsrp_top2"=>Union{Float64,Missing},"ofcom_pci_top3"=>Union{Int,Missing},"ofcom_rsrp_top3"=>Union{Float64,Missing},"ofcom_pci_top4"=>Union{Int,Missing},"ofcom_rsrp_top4"=>Union{Float64,Missing}"])
+"""
+    summarise_data_2024([data])
 
-function summarise_data_2024(data)
+Summarise the supplied data (optional) or load the default data file and return a summary.
+
+The summary includes the following fields:
+- `tb`: A unique identifier for the data point (based on x and y coordinates)
+- `x`: X coordinate in BNG
+- `y`: Y coordinate in BNG
+- `voda_pci`: Predicted PCI from Vodafone
+- `voda_rsrp`: Predicted RSRP from Vodafone
+- `ofcom_pci_mode`: The most common PCI from OFCOM measurements
+- `ofcom_pci_mode_count`: The count of the most common PCI from OFCOM
+- `ofcom_rsrp_match_mean`: Mean RSRP from OFCOM measurements that match the Vodafone PCI
+- `ofcom_rsrp_match_median`: Median RSRP from OFCOM measurements that match the Vodafone PCI
+- `ofcom_rsrp_match_min`: Minimum RSRP from OFCOM measurements that match the Vodafone PCI
+- `ofcom_rsrp_match_max`: Maximum RSRP from OFCOM measurements that match the Vodafone PCI
+- `ofcom_match_count`: Count of OFCOM measurements that match the Vodafone PCI
+- `ofcom_rsrp_match_1_mean`: Mean RSRP from OFCOM measurements that match the Vodafone PCI for the top 1 measurement
+- `ofcom_rsrp_match_1_min`: Minimum RSRP from OFCOM measurements that match the Vodafone PCI for the top 1 measurement
+- `ofcom_rsrp_match_1_max`: Maximum RSRP from OFCOM measurements that match the Vodafone PCI for the top 1 measurement
+- `ofcom_match_1_count`: Count of OFCOM measurements that match the Vodafone PCI for the top 1 measurement
+- `ofcom_rsrp_all_mean`: Mean RSRP from all OFCOM measurements
+- `ofcom_rsrp_all_median`: Median RSRP from all OFCOM measurements
+- `ofcom_rsrp_all_min`: Minimum RSRP from all OFCOM measurements
+- `ofcom_rsrp_all_max`: Maximum RSRP from all OFCOM measurements
+- `ofcom_all_count`: Count of all OFCOM measurements
+- `ofcom_rsrp_all_1_mean`: Mean RSRP from all OFCOM measurements for the top 1 measurement
+- `ofcom_rsrp_all_1_min`: Minimum RSRP from all OFCOM measurements for the top 1 measurement
+- `ofcom_rsrp_all_1_max`: Maximum RSRP from all OFCOM measurements for the top 1 measurement
+- `ofcom_all_1_count`: Count of all OFCOM measurements for the top 1 measurement
+"""
+function summarise_data_2024(data = CSV.read(
+        joinpath(
+            DATA_PATH, "4g-lte-2024-mobile-signal-measurement-data-combined.csv"),
+        DataFrame))
+    # A simple data structure to hold *all* the data for a given terrain bin (100m x 100m square)
     AllData = @NamedTuple{x::Int, y::Int, voda_pci::Int, voda_rsrp::Float64,
         ofcom_pci::Vector{Int}, ofcom_rsrp::Vector{Float64}, ofcom_pci_1::Vector{Int},
         ofcom_rsrp_1::Vector{Float64}}
     alldata = Dict{Int, AllData}()
+    # Iterate through each row of the data and populate the alldata dictionary
     for row in eachrow(data)
         tb = (row.x - row.x % 100) * 1_000_000 + (row.y - row.y % 100)
         if !haskey(alldata, tb)
@@ -279,6 +250,7 @@ function summarise_data_2024(data)
         if row.ofcom_pci_top1 !== missing
             push!(alldata[tb].ofcom_pci, row.ofcom_pci_top1)
             push!(alldata[tb].ofcom_rsrp, row.ofcom_rsrp_top1)
+            # Also store the top 1 PCI and RSRP separately
             push!(alldata[tb].ofcom_pci_1, row.ofcom_pci_top1)
             push!(alldata[tb].ofcom_rsrp_1, row.ofcom_rsrp_top1)
         end
@@ -295,26 +267,31 @@ function summarise_data_2024(data)
             push!(alldata[tb].ofcom_rsrp, row.ofcom_rsrp_top4)
         end
     end
+    # A data structure to hold the summary of each terrain bin
     Summary = @NamedTuple{tb::Int, x::Int, y::Int, voda_pci::Int, voda_rsrp::Float64,
-        ofcom_pci_mode::Int, ofcom_pci_mode_count::Int,
-        ofcom_rsrp_match_mean::Union{Float64, Missing}, ofcom_rsrp_match_median::Union{
-            Float64, Missing},
-        ofcom_rsrp_match_min::Union{Float64, Missing}, ofcom_rsrp_match_max::Union{
-            Float64, Missing},
+        ofcom_pci_mode::Int,
+        ofcom_pci_mode_count::Int,
+        ofcom_rsrp_match_mean::Union{Float64, Missing},
+        ofcom_rsrp_match_median::Union{Float64, Missing},
+        ofcom_rsrp_match_min::Union{Float64, Missing},
+        ofcom_rsrp_match_max::Union{Float64, Missing},
         ofcom_match_count::Int,
         ofcom_rsrp_match_1_mean::Union{Float64, Missing},
-        ofcom_rsrp_match_1_min::Union{Float64, Missing}, ofcom_rsrp_match_1_max::Union{
-            Float64, Missing},
+        ofcom_rsrp_match_1_min::Union{Float64, Missing},
+        ofcom_rsrp_match_1_max::Union{Float64, Missing},
         ofcom_match_1_count::Int,
-        ofcom_rsrp_all_mean::Float64, ofcom_rsrp_all_median::Float64,
-        ofcom_rsrp_all_min::Float64, ofcom_rsrp_all_max::Float64,
+        ofcom_rsrp_all_mean::Float64,
+        ofcom_rsrp_all_median::Float64,
+        ofcom_rsrp_all_min::Float64,
+        ofcom_rsrp_all_max::Float64,
         ofcom_all_count::Int,
         ofcom_rsrp_all_1_mean::Union{Float64, Missing},
-        ofcom_rsrp_all_1_min::Union{Float64, Missing}, ofcom_rsrp_all_1_max::Union{
-            Float64, Missing},
+        ofcom_rsrp_all_1_min::Union{Float64, Missing},
+        ofcom_rsrp_all_1_max::Union{Float64, Missing},
         ofcom_all_1_count::Int
     }
     summary = Vector{Summary}()
+    # Iterate through each terrain bin and calculate the summary statistics
     for (tb, sum) in alldata
         if isempty(sum.ofcom_pci)
             continue
@@ -384,25 +361,17 @@ function summarise_data_2024(data)
                 ofcom_rsrp_all_min, ofcom_rsrp_all_max, ofcom_all_count,
                 ofcom_rsrp_all_1_mean,
                 ofcom_rsrp_all_1_min, ofcom_rsrp_all_1_max, ofcom_all_1_count
-            )))
+            ))
+        )
     end
+    CSV.write(
+        joinpath(DATA_PATH, "4g-lte-2024-mobile-signal-measurement-data-summary.csv"),
+        summary
+    )
     return summary
 end
 
-end # module Vodafone
+# Run the functions
 
-# tb: terrain bin (xy)
-# voda_pci: Vodafone predicted PCI
-# voda_rsrp: Vodafone predicted RSRP
-# ofcom_pci_mode: Ofcom most common PCI
-# ofcom_pci_mode_count: Number of times the Ofcom most common PCI appears
-# ofcom_rsrp_match_mean: Mean RSRP for Ofcom measurements matching the Vodafone PCI
-# ofcom_rsrp_match_median: Median RSRP for Ofcom measurements matching the Vodafone PCI
-# ofcom_rsrp_match_min: Minimum RSRP for Ofcom measurements matching the Vodafone PCI
-# ofcom_rsrp_match_max: Maximum RSRP for Ofcom measurements matching the Vodafone PCI
-# ofcom_match_count: Number of Ofcom measurements matching the Vodafone PCI
-# ofcom_rsrp_all_mean: Mean RSRP for all Ofcom measurements
-# ofcom_rsrp_all_median: Median RSRP for all Ofcom measurements
-# ofcom_rsrp_all_min: Minimum RSRP for all Ofcom measurements
-# ofcom_rsrp_all_max: Maximum RSRP for all Ofcom measurements
-# ofcom_all_count: Number of Ofcom measurements
+combine_data_2024()
+summarise_data_2024()
